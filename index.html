@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CRYPTO MULTIPLY - FAST TRADING</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- 🎰 ক্যাসিনো হেডার প্যানেল -->
+    <div class="header">
+        <div class="brand">
+            <div class="name">CRYPTO MULTIPLY</div>
+            <div class="game">FAST TRADING GRAPH</div>
+        </div>
+        <div class="header-right">
+            <button class="sound-btn" id="mute-btn" onclick="toggleMute()">🔊</button>
+        </div>
+    </div>
+
+    <!-- 📊 ডাইনামিক ট্রেডিং ক্যানভাস উইন্ডো জোন ভাই ভাই -->
+    <div class="graph-zone">
+        <div class="graph-window-frame">
+            <canvas id="tradingCanvas"></canvas>
+            <!-- 🚀 [মেগা ক্লিয়ার ডিটেক্টর]: লাইভ গ্রাফের শেষ মাথায় আপ-ডাউনের নিয়ন সিগন্যাল ডট ভাই ভাই -->
+            <div id="graph-live-pointer" class="live-pointer-node"></div>
+        </div>
+    </div>
+
+    <!-- 🎰 বাজি ধরার প্রধান ২টি নিয়ন কালার বেটিং বোর্ড ঘর (১.৯৫ ওডস কড়া লক ভাই ভাই) -->
+    <div class="betting-board">
+        <button class="bet-board-btn up-win-btn" id="board-GREEN" onclick="selectTradeTrend('GREEN')">
+            <span class="board-label">GREEN (UP) ▲</span>
+            <span class="board-odds">x1.95</span>
+        </button>
+        <button class="bet-board-btn down-win-btn" id="board-RED" onclick="selectTradeTrend('RED')">
+            <span class="board-label">RED (DOWN) ▼</span>
+            <span class="board-odds">x1.95</span>
+        </button>
+    </div>
+
+    <!-- 🏆 ইন-লাইন লাইভ স্কোরিং মেসেজ বার (রেজাল্ট ১০০% ক্লিয়ার ফুটিয়ে তোলার নোটিশ) -->
+    <div class="win-status-container" id="win-status-box">
+        <span id="win-text-msg">মার্কেট ট্রেন্ড প্রেডিক্ট করে TRADE বোতাম চাপুন ভাই ভাই!</span>
+    </div>
+
+    <!-- 🎛️ কন্ট্রোল প্যানেল এরিয়া (৳১-৳২০০০0 প্লাস-মাইনাস ও TRADE বোতাম পাশাপাশি লক ভাই) -->
+    <div class="footer-controls">
+        <div class="play-section">
+            <div class="bet-selector">
+                <button class="bet-btn-nav" onclick="adjustBet('minus')">−</button>
+                <div style="text-align: center; width: 60px;">
+                    <div style="font-size: 9px; color: #aaa; font-weight: bold;">BET</div>
+                    <div style="font-size: 15px; font-weight: 900; color: #fff;" id="bet-display">৳৫০</div>
+                </div>
+                <button class="bet-btn-nav" onclick="adjustBet('plus')">+</button>
+            </div>
+
+            <button class="play-btn" id="spin-btn" onclick="handleCryptoTradeAction()">TRADE</button>
+
+            <div class="icon-group">
+                <button class="icon-btn" id="auto-btn" onclick="toggleAuto()">🔄</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🔌 [উইনগো কালার ট্রেড সিঙ্ক - ইউনিভার্সাল সকেট লাইব্রেরি] -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlUserId = urlParams.get('userId') || urlParams.get('id') || urlParams.get('username') || "guest_user";
+        const urlWallet = urlParams.get('wallet') || "main";
+        
+        const SERVER_URL = window.location.origin;
+
+        let balance = 0.00;
+        let currentBet = 50; 
+        let selectedTrend = null; 
+        let isSpinning = false; 
+        let isAuto = false;
+        let isMuted = false;
+        let autoInterval = null;
+
+        // ক্যানভাস প্রফেশনাল সেটআপ ভাই ভাই
+        const canvas = document.getElementById("tradingCanvas");
+        const ctx = canvas.getContext("2d");
+        const pointer = document.getElementById("graph-live-pointer");
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+            drawDefaultGridLines();
+        }
+
+        function drawDefaultGridLines() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
+            ctx.lineWidth = 1;
+            for(let i=0; i<canvas.width; i+=30) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+            }
+            for(let j=0; j<canvas.height; j+=30) {
+                ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(canvas.width, j); ctx.stroke();
+            }
+        }
+
+        // 🧠 [১ শতভাগ ক্লিয়ার আপ-ডাউন গ্রাফ এনিমেশন ফিজিক্স ইঞ্জিন]
+        function runLiveTradingGraphAnimation(serverData) {
+            let totalPoints = 40;
+            let currentX = 0;
+            let stepX = canvas.width / totalPoints;
+            let pointsArray = [];
+            
+            let startY = canvas.height / 2;
+            let lastY = startY;
+
+            // শুরুর বাম বিন্দুর ডেটা পুশ
+            pointsArray.push({ x: 0, y: startY });
+
+            // গ্রাফের আঁকাবাঁকা পয়েন্ট জেনারেটর ম্যাথ ভাই ভাই
+            for(let i=1; i<totalPoints; i++) {
+                let nextX = i * stepX;
+                let nextY = lastY + (Math.random() * 40 - 20);
+                if(nextY < 20) nextY = 20;
+                if(nextY > canvas.height - 20) nextY = canvas.height - 20;
+                pointsArray.push({ x: nextX, y: nextY });
+                lastY = nextY;
+            }
+
+            // 🚀 ওরিজিনাল ফাইনাল পয়েন্ট ক্লিয়ার ফিক্সড সিঙ্ক (UP হলে উপরে ফায়ার, DOWN হলে নিচে ফায়ার!)
+            let finalX = canvas.width;
+            let finalY = (serverData.status === "win" && selectedTrend === "GREEN") || (serverData.status === "lose" && selectedTrend === "RED") 
+                ? Math.random() * 40 + 20  // UP মোড (ক্যানভাসের একদম ওপরের এরিয়া)
+                : canvas.height - (Math.random() * 40 + 20); // DOWN মোড (ক্যানভাসের একদম নিচের এরিয়া)
+            
+            pointsArray.push({ x: finalX, y: finalY });
+
+            let drawStep = 0;
+            drawDefaultGridLines();
+
+            // ⏱️ ২৫ মিলি-সেকেন্ড পর পর লাইন বাম থেকে ডানে অন ফায়ার দৌড়াবে ভাই ভাই
+            const graphTimeline = setInterval(() => {
+                if (drawStep >= pointsArray.length - 1) {
+                    clearInterval(graphTimeline);
+                    
+                    // 🚀 [মেগা ক্লিয়ার ডিটেকশন লাল-সবুজ সিগনাল লাইভ ফায়ার ভাই ভাই]
+                    pointer.style.display = "block";
+                    pointer.style.left = `${canvas.width - 12}px`;
+                    pointer.style.top = `${finalY - 6}px`;
+                    
+                    if (finalY < canvas.height / 2) {
+                        pointer.className = "live-pointer-node pointer-green-glow"; // গ্রিন আপ সিগনাল
+                    } else {
+                        pointer.className = "live-pointer-node pointer-red-glow"; // রেড ডাউন সিগনাল
+                    }
+
+                    showFinalGameReward(serverData.status, serverData.winAmount, finalY < canvas.height / 2 ? "GREEN (UP) ▲" : "RED (DOWN) ▼");
+                    return;
+                }
+
+                ctx.beginPath();
+                ctx.strokeStyle = "#f1c40f"; // রাজকীয় গোল্ডেন ট্রেন্ড লাইন
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = "#f1c40f";
+                ctx.moveTo(pointsArray[drawStep].x, pointsArray[drawStep].y);
+                ctx.lineTo(pointsArray[drawStep+1].x, pointsArray[drawStep+1].y);
+                ctx.stroke();
+
+                // লাইভ পয়েন্টার ডট ট্র্যাকিং মুভমেন্ট
+                pointer.style.display = "block";
+                pointer.style.left = `${pointsArray[drawStep+1].x - 6}px`;
+                pointer.style.top = `${pointsArray[drawStep+1].y - 6}px`;
+                pointer.className = "live-pointer-node pointer-yellow-glow";
+
+                drawStep++;
+            }, 25); 
+        }
+
+        // 🛫 কোর TRADE বোতাম অ্যাকশন গেটওয়ে ভাই ভাই
+        async function handleCryptoTradeAction() {
+            if (isSpinning) return;
+            if (!selectedTrend) {
+                alert("🚨 আগে মার্কেট ট্রেন্ডের যেকোনো ১টি দিক (GREEN বা RED) সিলেক্ট করুন ভাই!");
+                isAuto = false;
+                document.getElementById("auto-btn").classList.remove("active");
+                return;
+            }
+
+            isSpinning = true;
+            document.getElementById("spin-btn").disabled = true;
+            pointer.style.display = "none";
+            document.getElementById("win-status-box").className = "win-status-container";
+            document.getElementById("win-text-msg").innerText = "📈 লাইভ ট্রেডিং গ্রাফ এনালাইসিস হচ্ছে...";
+
+            playAudio('spin');
+            resizeCanvas(); // ক্যানভাস ফ্রেশ ক্লিনিং লক
+
+            try {
+                const response = await fetch(`${SERVER_URL}/api/crypto-multiply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId: urlUserId,
+                        amount: parseFloat(currentBet),
+                        wallet: urlWallet,
+                        prediction: selectedTrend
+                    })
+                });
+                const data = await response.json();
+
+                if (data && data.success === true) {
+                    balance = parseFloat(data.balance);
+                    if (window.parent) window.parent.postMessage({ action: "refresh_wallet" }, "*");
+                    runLiveTradingGraphAnimation(data);
+                } else {
+                    alert(data.message || "❌ Insufficient Balance! Please Recharge.");
+                    stopTradeState();
+                }
+            } catch (err) {
+                alert("⚠️ সেশন আউট! আবার TRADE বোতাম চাপুন ভাই ভাই।");
+                stopTradeState();
+            }
+        }
+        function showFinalGameReward(status, winAmount, finalTrendText) {
+            const msgBox = document.getElementById("win-status-box");
+            const textMsg = document.getElementById("win-text-msg");
+
+            if (status === "win") {
+                playAudio('win');
+                msgBox.className = "win-status-container win-glow-bar";
+                textMsg.innerText = `🏆 মেগা উইন!! মার্কেট ট্রেন্ড গেছে: ${finalTrendText} [৳${winAmount}]`;
+            } else {
+                playAudio('wheel'); 
+                msgBox.className = "win-status-container lose-glow-bar";
+                textMsg.innerText = `❌ মার্কেট ট্রেন্ড গেছে: ${finalTrendText}। বাজি লস হয়েছে ভাই!`;
+            }
+
+            stopTradeState();
+            if (isAuto) {
+                autoInterval = setTimeout(() => { if (isAuto) handleCryptoTradeAction(); }, 3000); 
+            }
+        }
+
+        if (typeof io !== 'undefined') {
+            const socket = io();
+            socket.on("balanceUpdate", (data) => {
+                if (data && data.username === urlUserId) {
+                    if (window.parent) window.parent.postMessage({ action: "refresh_wallet" }, "*");
+                    fetchLiveBalance();
+                }
+            });
+        }
+
+        async function fetchLiveBalance() {
+            try {
+                const response = await fetch(`${SERVER_URL}/api/crypto-balance?userId=${urlUserId}&wallet=${urlWallet}`);
+                const data = await response.json();
+                if (data && data.success) {
+                    balance = parseFloat(data.balance);
+                }
+            } catch (e) { console.error("Balance lag check"); }
+        }
+
+        window.onload = () => {
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+            if (window.parent) window.parent.postMessage({ action: "refresh_wallet" }, "*");
+            fetchLiveBalance();
+        };
+
+        function selectTradeTrend(trend) {
+            if (isSpinning) return;
+            selectedTrend = trend;
+            document.querySelectorAll(".bet-board-btn").forEach(b => b.classList.remove("active-side-bet"));
+            document.getElementById(`board-${trend}`).classList.add("active-side-bet");
+            playAudio('click');
+        }
+
+        function adjustBet(action) {
+            if (isSpinning) return;
+            if (action === 'minus' && currentBet > 1) {
+                if (currentBet <= 10) currentBet -= 1;
+                else if (currentBet <= 100) currentBet -= 10;
+                else if (currentBet <= 1000) currentBet -= 100;
+                else currentBet -= 500;
+            }
+            if (action === 'plus' && currentBet < 20000) {
+                if (currentBet < 10) currentBet += 1;
+                else if (currentBet < 100) currentBet += 10;
+                else if (currentBet < 1000) currentBet += 100;
+                else currentBet += 500;
+            }
+            if (currentBet < 1) currentBet = 1;
+            if (currentBet > 20000) currentBet = 20000;
+            document.getElementById("bet-display").innerText = `৳${currentBet}`;
+            playAudio('click');
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            document.getElementById("mute-btn").innerText = isMuted ? "🔇" : "🔊";
+            document.getElementById("mute-btn").classList.toggle("muted-active", isMuted);
+            slotSounds.click.muted = isMuted;
+            slotSounds.spin.muted = isMuted;
+            slotSounds.win.muted = isMuted;
+            slotSounds.wheel.muted = isMuted;
+        }
+
+        function toggleAuto() {
+            isAuto = !isAuto;
+            document.getElementById("auto-btn").classList.toggle("active", isAuto);
+            if (isAuto && !isSpinning) handleCryptoTradeAction();
+            playAudio('click');
+        }
+
+        function stopTradeState() {
+            isSpinning = false;
+            document.getElementById("spin-btn").disabled = false;
+            if (!isAuto && autoInterval) clearTimeout(autoInterval);
+        }
+
+        const slotSounds = {
+            click: new Audio('click2.mp3'),
+            spin: new Audio('spin2.mp3'),
+            win: new Audio('win2.mp3'),
+            wheel: new Audio('wheel1.mp3')
+        };
+        Object.values(slotSounds).forEach(s => s.load());
+
+        function playAudio(type) { 
+            if (isMuted) return; 
+            try { slotSounds[type].currentTime = 0; slotSounds[type].play(); } catch(e){} 
+        }
+    </script>
+</body>
+</html>
+
+        
